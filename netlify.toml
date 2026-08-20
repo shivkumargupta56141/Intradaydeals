@@ -1,0 +1,8 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# Runs the data collector every 15 minutes, Mon-Fri, 3:00-10:15 UTC
+# (roughly 8:30am - 3:45pm IST, covering NSE/BSE market hours with buffer)
+[functions."collect-deals"]
+  schedule = "*/15 3-10 * * 1-5"
