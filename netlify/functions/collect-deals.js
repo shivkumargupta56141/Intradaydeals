@@ -62,14 +62,42 @@ export default async () => {
 
   for (const [date, deals] of Object.entries(byDate)) {
     const blobKey = `deals-${date}`;
-    const existing = (await store.get(blobKey, { type: "json" })) || [];
-    const existingKeys = new Set(existing.map(dealKey));
+    const rawExisting = (await store.get(blobKey, { type: "json" })) || [];
 
-    const newOnes = deals
+    // Clean up any duplicates already sitting in storage from before this fix
+    const existingSeen = new Set();
+    const existing = [];
+    for (const d of rawExisting) {
+      const k = dealKey(d);
+      if (!existingSeen.has(k)) {
+        existingSeen.add(k);
+        existing.push(d);
+      }
+    }
+
+    const existingKeys = existingSeen;
+
+    // Dedupe WITHIN this fetch batch first — pagination can occasionally
+    // return the same deal twice if new deals arrive between page calls,
+    // shifting indices mid-fetch. Without this, both copies would look
+    // "new" (since neither is in existingKeys yet) and both get saved.
+    const seenInBatch = new Set();
+    const uniqueInBatch = [];
+    for (const d of deals) {
+      const k = dealKey(d);
+      if (!seenInBatch.has(k)) {
+        seenInBatch.add(k);
+        uniqueInBatch.push(d);
+      }
+    }
+
+    const newOnes = uniqueInBatch
       .filter((d) => !existingKeys.has(dealKey(d)))
       .map((d) => ({ ...d, collected_at: new Date().toISOString() }));
 
-    if (newOnes.length > 0) {
+    const dupesRemoved = rawExisting.length - existing.length;
+
+    if (newOnes.length > 0 || dupesRemoved > 0) {
       const merged = existing.concat(newOnes);
       await store.setJSON(blobKey, merged);
       totalNew += newOnes.length;
