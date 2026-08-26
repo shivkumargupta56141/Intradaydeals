@@ -54,6 +54,16 @@
   .subtle { color: var(--muted); font-size: 10px; }
   .clickable-row { cursor: pointer; }
   .clickable-row:active, .clickable-row:hover { background: #1e232b; }
+  .chevron { color: var(--accent); font-size: 18px; text-align: right; width: 20px; }
+  .sort-controls { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .sort-label { font-size: 11px; color: var(--muted); margin-right: 2px; }
+  .sort-btn {
+    background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+    border-radius: 20px; padding: 5px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+  }
+  .sort-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table-scroll table { min-width: 640px; }
   .badge {
     display: inline-block; padding: 2px 8px; border-radius: 20px;
     font-size: 10px; font-weight: 600;
@@ -102,7 +112,7 @@
       <h2>Cumulative Deal Value by Stock</h2>
       <div class="hint">Highest to lowest. Tap a stock to see every deal behind the total.</div>
       <table>
-        <thead><tr><th>Stock</th><th class="num">Deals</th><th class="num">Total Value</th></tr></thead>
+        <thead><tr><th>Stock</th><th class="num">Deals</th><th class="num">Total Value</th><th></th></tr></thead>
         <tbody id="by-stock-body"></tbody>
       </table>
     </div>
@@ -113,7 +123,7 @@
       <h2>Cumulative Deal Value by Sector</h2>
       <div class="hint">Highest to lowest. Tap a sector to see every deal within it.</div>
       <table>
-        <thead><tr><th>Sector</th><th class="num">Deals</th><th class="num">Total Value</th></tr></thead>
+        <thead><tr><th>Sector</th><th class="num">Deals</th><th class="num">Total Value</th><th></th></tr></thead>
         <tbody id="by-sector-body"></tbody>
       </table>
     </div>
@@ -123,6 +133,12 @@
     <div class="section">
       <h2>Day-over-Day Comparison</h2>
       <div class="hint">Each stock's latest day total vs. its previous day of activity.</div>
+      <div class="sort-controls">
+        <span class="sort-label">Sort by:</span>
+        <button class="sort-btn active" id="sort-value" onclick="setDodSort('value')">Value</button>
+        <button class="sort-btn" id="sort-change" onclick="setDodSort('change')">% Change</button>
+        <button class="sort-btn" id="sort-trend" onclick="setDodSort('trend')">Trend</button>
+      </div>
       <table>
         <thead><tr><th>Stock</th><th class="num">Latest</th><th class="num">Previous</th><th class="num">Change</th><th>Trend</th></tr></thead>
         <tbody id="dod-body"></tbody>
@@ -132,12 +148,14 @@
 
   <div id="top30" class="panel">
     <div class="section">
-      <h2>Top 30 Individual Deals</h2>
-      <div class="hint">No aggregation — highest deal value first.</div>
+      <h2>Top 30 Deals — Today</h2>
+      <div class="hint">Resets each day. No aggregation — highest deal value first, for the most recent trading day only. Swipe table sideways to see all columns.</div>
+      <div class="table-scroll">
       <table>
-        <thead><tr><th>Date/Time</th><th>Stock</th><th class="num">Value</th></tr></thead>
+        <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
         <tbody id="top30-body"></tbody>
       </table>
+      </div>
     </div>
   </div>
 </div>
@@ -231,6 +249,7 @@ function renderByStock() {
       <td class="name-cell">${r.stock} <span class="ticker">${r.ticker}</span></td>
       <td class="num">${r.count}</td>
       <td class="num value">₹${r.total.toFixed(2)} Cr</td>
+      <td class="chevron">›</td>
     </tr>`).join('');
 }
 
@@ -247,6 +266,7 @@ function renderBySector() {
       <td class="name-cell">${r.sector}</td>
       <td class="num">${r.count}</td>
       <td class="num value">₹${r.total.toFixed(2)} Cr</td>
+      <td class="chevron">›</td>
     </tr>`).join('');
 }
 
@@ -265,7 +285,7 @@ function renderDayOverDay() {
   const latestDate = dates[0];
   const latestRows = stockDayTotals.filter(r => r.date === latestDate);
 
-  const results = latestRows.map(r => {
+  let results = latestRows.map(r => {
     const priorRows = stockDayTotals
       .filter(x => x.stock === r.stock && x.date < latestDate)
       .sort((a,b) => b.date.localeCompare(a.date));
@@ -276,7 +296,7 @@ function renderDayOverDay() {
     const changePct = ((r.total - prev.total) / prev.total) * 100;
     const direction = r.total > prev.total ? 'UP' : (r.total < prev.total ? 'DOWN' : 'FLAT');
     return { ...r, prevValue: prev.total, prevDate: prev.date, changePct, direction };
-  }).sort((a,b) => b.total - a.total);
+  });
 
   if (dates.length < 2) {
     document.getElementById('dod-body').innerHTML =
@@ -284,7 +304,42 @@ function renderDayOverDay() {
     return;
   }
 
-  document.getElementById('dod-body').innerHTML = results.map(r => {
+  DOD_RESULTS = results; // cache for re-sorting without recomputing
+  renderDodTable();
+}
+
+let DOD_RESULTS = [];
+let DOD_SORT = 'value';
+
+function setDodSort(mode) {
+  DOD_SORT = mode;
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('sort-' + mode).classList.add('active');
+  renderDodTable();
+}
+
+function renderDodTable() {
+  const trendRank = { UP: 0, NEW: 1, FLAT: 2, DOWN: 3 };
+  let sorted = [...DOD_RESULTS];
+
+  if (DOD_SORT === 'value') {
+    sorted.sort((a,b) => b.total - a.total);
+  } else if (DOD_SORT === 'change') {
+    // highest % increase first; NEW entries (no prior value) sort after all numeric changes
+    sorted.sort((a,b) => {
+      if (a.changePct === null && b.changePct === null) return b.total - a.total;
+      if (a.changePct === null) return 1;
+      if (b.changePct === null) return -1;
+      return b.changePct - a.changePct;
+    });
+  } else if (DOD_SORT === 'trend') {
+    sorted.sort((a,b) => {
+      const r = trendRank[a.direction] - trendRank[b.direction];
+      return r !== 0 ? r : b.total - a.total;
+    });
+  }
+
+  document.getElementById('dod-body').innerHTML = sorted.map(r => {
     let badge;
     if (r.direction === 'UP') badge = '<span class="badge up">▲ UP</span>';
     else if (r.direction === 'DOWN') badge = '<span class="badge down">▼ DOWN</span>';
@@ -303,11 +358,17 @@ function renderDayOverDay() {
 }
 
 function renderTop30() {
-  const top = [...DEALS].sort((a,b) => b.dealValue - a.dealValue).slice(0, 30);
+  const latestDate = [...DEALS].map(d => d.deal_date).sort().reverse()[0];
+  const todayOnly = DEALS.filter(d => d.deal_date === latestDate);
+  const top = [...todayOnly].sort((a,b) => b.dealValue - a.dealValue).slice(0, 30);
   document.getElementById('top30-body').innerHTML = top.map(d => `
     <tr>
       <td>${d.deal_date} ${fmtTime(d.deal_time)}</td>
       <td class="name-cell">${d.sc_comp}</td>
+      <td>${d.stock_sector}</td>
+      <td>${d.exchange}</td>
+      <td class="num">${d.quantity.toLocaleString()}</td>
+      <td class="num">₹${d.tradedPrice.toLocaleString()}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
     </tr>`).join('');
 }
