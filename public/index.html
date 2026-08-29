@@ -10,6 +10,12 @@
     --text: #e8eaed; --muted: #8b929e; --accent: #4f9dff;
     --up: #34c759; --down: #ff5c5c; --new: #ffb020;
   }
+  html[data-theme="light"] {
+    --bg: #f5f6f8; --panel: #ffffff; --border: #e1e4e9;
+    --text: #14161a; --muted: #6b7280; --accent: #2563eb;
+    --up: #1a9c46; --down: #d92d2d; --new: #b8790a;
+  }
+  body { transition: background 0.15s ease, color 0.15s ease; }
   * { box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--text);
@@ -87,15 +93,29 @@
   .close-btn { cursor: pointer; color: var(--muted); font-size: 22px; line-height: 1; background: none; border: none; padding: 4px 8px; }
   .refresh-btn {
     background: var(--accent); color: white; border: none; border-radius: 8px;
-    padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer; margin-bottom: 16px;
+    padding: 8px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
   }
+  .top-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .theme-switch { display: flex; gap: 4px; }
+  .theme-btn {
+    background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+    border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .theme-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
 </style>
 </head>
 <body>
 
 <h1>Moneycontrol Large Deals — Live</h1>
 <div class="meta" id="meta-line">Loading...</div>
-<button class="refresh-btn" onclick="loadData()">↻ Refresh Now</button>
+<div class="top-controls">
+  <button class="refresh-btn" onclick="loadData()">↻ Refresh Now</button>
+  <div class="theme-switch">
+    <button class="theme-btn" id="theme-dark" onclick="setTheme('dark')">🌙 Dark</button>
+    <button class="theme-btn" id="theme-light" onclick="setTheme('light')">☀️ Light</button>
+    <button class="theme-btn" id="theme-system" onclick="setTheme('system')">🖥 System</button>
+  </div>
+</div>
 
 <div id="app" style="display:none;">
   <div class="stats" id="stats"></div>
@@ -496,6 +516,31 @@ document.getElementById('by-stock-body').addEventListener('click', (e) => {
 document.getElementById('by-sector-body').addEventListener('click', (e) => {
   const row = e.target.closest('tr[data-sector]');
   if (row) showSectorDeals(row.dataset.sector);
+});
+
+// --- Theme handling: Dark / Light / System ---
+// "System" resolves to whatever the device's OS-level appearance is set
+// to right now, and keeps tracking it live if the OS setting changes
+// while System stays selected (e.g. phone auto-switches at sunset).
+function applyResolvedTheme(pref) {
+  const resolved = pref === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : pref;
+  document.documentElement.setAttribute('data-theme', resolved);
+}
+
+function setTheme(pref) {
+  localStorage.setItem('mc-theme', pref);
+  document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('theme-' + pref).classList.add('active');
+  applyResolvedTheme(pref);
+}
+
+const savedTheme = localStorage.getItem('mc-theme') || 'system';
+setTheme(savedTheme);
+
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+  if (localStorage.getItem('mc-theme') === 'system') applyResolvedTheme('system');
 });
 
 loadData();
