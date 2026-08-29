@@ -44,17 +44,63 @@ async function fetchAll() {
   return all;
 }
 
+// Round to 2 decimals to avoid floating-point noise (e.g. 411.0299999999
+// vs 411.03) making two genuinely identical deals look different.
+function round2(n) {
+  return Math.round(Number(n) * 100) / 100;
+}
+
+// Normalized identity for a deal. Uses deal_time (minute-level) plus
+// quantity + rounded price + rounded value. Two deals only collide here
+// if they share stock, minute, quantity, price AND value.
 function dealKey(d) {
-  return [d.scriptcode, d.deal_time, d.deal_date, d.quantity, d.dealValue].join("|");
+  return [
+    d.scriptcode,
+    d.deal_date,
+    d.deal_time,
+    d.quantity,
+    round2(d.tradedPrice),
+    round2(d.dealValue),
+  ].join("|");
+}
+
+function dedupeList(list) {
+  const seen = new Set();
+  const out = [];
+  for (const d of list) {
+    const k = dealKey(d);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(d);
+    }
+  }
+  return out;
 }
 
 export default async () => {
   const store = getStore("mc-deals");
-  const fresh = await fetchAll();
 
-  // group fresh deals by their deal_date
+  // --- Step 1: sweep EVERY stored date and purge existing duplicates ---
+  // (not just dates present in today's fetch — otherwise older dates'
+  // duplicates, created before this fix, would never get cleaned since
+  // the API mostly returns recent dates each run.)
+  const { blobs } = await store.list({ prefix: "deals-" });
+  let totalCleaned = 0;
+  for (const { key } of blobs) {
+    const rawExisting = (await store.get(key, { type: "json" })) || [];
+    const cleaned = dedupeList(rawExisting);
+    if (cleaned.length !== rawExisting.length) {
+      await store.setJSON(key, cleaned);
+      totalCleaned += rawExisting.length - cleaned.length;
+    }
+  }
+
+  // --- Step 2: fetch fresh data and add genuinely new deals ---
+  const fresh = await fetchAll();
+  const uniqueFresh = dedupeList(fresh); // dedupe within this batch itself
+
   const byDate = {};
-  for (const d of fresh) {
+  for (const d of uniqueFresh) {
     (byDate[d.deal_date] ||= []).push(d);
   }
 
@@ -62,42 +108,14 @@ export default async () => {
 
   for (const [date, deals] of Object.entries(byDate)) {
     const blobKey = `deals-${date}`;
-    const rawExisting = (await store.get(blobKey, { type: "json" })) || [];
+    const existing = (await store.get(blobKey, { type: "json" })) || [];
+    const existingKeys = new Set(existing.map(dealKey));
 
-    // Clean up any duplicates already sitting in storage from before this fix
-    const existingSeen = new Set();
-    const existing = [];
-    for (const d of rawExisting) {
-      const k = dealKey(d);
-      if (!existingSeen.has(k)) {
-        existingSeen.add(k);
-        existing.push(d);
-      }
-    }
-
-    const existingKeys = existingSeen;
-
-    // Dedupe WITHIN this fetch batch first — pagination can occasionally
-    // return the same deal twice if new deals arrive between page calls,
-    // shifting indices mid-fetch. Without this, both copies would look
-    // "new" (since neither is in existingKeys yet) and both get saved.
-    const seenInBatch = new Set();
-    const uniqueInBatch = [];
-    for (const d of deals) {
-      const k = dealKey(d);
-      if (!seenInBatch.has(k)) {
-        seenInBatch.add(k);
-        uniqueInBatch.push(d);
-      }
-    }
-
-    const newOnes = uniqueInBatch
+    const newOnes = deals
       .filter((d) => !existingKeys.has(dealKey(d)))
       .map((d) => ({ ...d, collected_at: new Date().toISOString() }));
 
-    const dupesRemoved = rawExisting.length - existing.length;
-
-    if (newOnes.length > 0 || dupesRemoved > 0) {
+    if (newOnes.length > 0) {
       const merged = existing.concat(newOnes);
       await store.setJSON(blobKey, merged);
       totalNew += newOnes.length;
@@ -105,7 +123,7 @@ export default async () => {
   }
 
   return new Response(
-    JSON.stringify({ ok: true, totalNew, ranAt: new Date().toISOString() }),
+    JSON.stringify({ ok: true, totalNew, totalCleaned, ranAt: new Date().toISOString() }),
     { headers: { "Content-Type": "application/json" } }
   );
 };
