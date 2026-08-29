@@ -161,14 +161,28 @@
   </div>
 
   <div class="tabs">
-    <div class="tab active" onclick="showTab('by-stock', event)">By Stock</div>
+    <div class="tab active" onclick="showTab('top30', event)">Top 30 Deals</div>
+    <div class="tab" onclick="showTab('by-stock', event)">By Stock</div>
     <div class="tab" onclick="showTab('by-sector', event)">By Sector</div>
     <div class="tab" onclick="showTab('heatmap', event)">Heatmap</div>
     <div class="tab" onclick="showTab('day-over-day', event)">Day-over-Day</div>
-    <div class="tab" onclick="showTab('top30', event)">Top 30 Deals</div>
   </div>
 
-  <div id="by-stock" class="panel active">
+  <div id="top30" class="panel active">
+    <div class="section">
+      <h2>Top 30 Deals — Today</h2>
+      <div class="hint">Resets each day. No aggregation — highest deal value first, for the most recent trading day only. Swipe table sideways to see all columns.</div>
+      <button class="csv-btn" onclick="exportTop30Csv()">⬇ Download CSV</button>
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
+        <tbody id="top30-body"></tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="by-stock" class="panel">
     <div class="section">
       <h2>Deal Value by Stock</h2>
       <div class="hint">Highest to lowest. Tap a stock to see every deal behind the total. % shows period-over-period change.</div>
@@ -187,21 +201,6 @@
       </table>
     </div>
   </div>
-
-  <div id="heatmap" class="panel">
-    <div class="section">
-      <h2>Sector Heatmap</h2>
-      <div class="hint">Tile size = deal value (bigger = more money moved). Tile color = change vs. the period before. Tap a tile to see every deal in that sector. Uses the same period as By Sector's view toggle.</div>
-      <div class="heatmap-legend">
-        <span class="legend-swatch" style="background: rgb(217,45,45)"></span> Falling
-        <span class="legend-swatch" style="background: rgb(107,114,128)"></span> Flat / no comparison
-        <span class="legend-swatch" style="background: rgb(26,156,70)"></span> Rising
-        <span class="legend-swatch" style="background: #2563eb"></span> New today
-      </div>
-      <div class="heatmap-grid" id="heatmap-grid"></div>
-    </div>
-  </div>
-
 
   <div id="by-sector" class="panel">
     <div class="section">
@@ -222,6 +221,19 @@
     </div>
   </div>
 
+  <div id="heatmap" class="panel">
+    <div class="section">
+      <h2>Sector Heatmap</h2>
+      <div class="hint">Tile size = deal value (bigger = more money moved). Tile color = change vs. the period before. Tap a tile to see every deal in that sector. Uses the same period as By Sector's view toggle.</div>
+      <div class="heatmap-legend">
+        <span class="legend-swatch" style="background: rgb(217,45,45)"></span> Falling
+        <span class="legend-swatch" style="background: rgb(107,114,128)"></span> Flat / no comparison
+        <span class="legend-swatch" style="background: rgb(26,156,70)"></span> Rising
+        <span class="legend-swatch" style="background: #2563eb"></span> New today
+      </div>
+      <div class="heatmap-grid" id="heatmap-grid"></div>
+    </div>
+  </div>
 
   <div id="day-over-day" class="panel">
     <div class="section">
@@ -238,20 +250,6 @@
         <thead><tr><th>Stock</th><th class="num">Latest</th><th class="num">Previous</th><th class="num">Change</th><th>Trend</th></tr></thead>
         <tbody id="dod-body"></tbody>
       </table>
-    </div>
-  </div>
-
-  <div id="top30" class="panel">
-    <div class="section">
-      <h2>Top 30 Deals — Today</h2>
-      <div class="hint">Resets each day. No aggregation — highest deal value first, for the most recent trading day only. Swipe table sideways to see all columns.</div>
-      <button class="csv-btn" onclick="exportTop30Csv()">⬇ Download CSV</button>
-      <div class="table-scroll">
-      <table>
-        <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
-        <tbody id="top30-body"></tbody>
-      </table>
-      </div>
     </div>
   </div>
 </div>
