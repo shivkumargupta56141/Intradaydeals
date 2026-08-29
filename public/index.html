@@ -109,10 +109,15 @@
 
   <div id="by-stock" class="panel active">
     <div class="section">
-      <h2>Cumulative Deal Value by Stock</h2>
-      <div class="hint">Highest to lowest. Tap a stock to see every deal behind the total.</div>
+      <h2>Deal Value by Stock</h2>
+      <div class="hint">Highest to lowest. Tap a stock to see every deal behind the total. % shows change vs. cumulative value through the previous day.</div>
+      <div class="sort-controls">
+        <span class="sort-label">View:</span>
+        <button class="sort-btn" id="stock-view-today" onclick="setStockView('today')">Today</button>
+        <button class="sort-btn active" id="stock-view-cumulative" onclick="setStockView('cumulative')">Cumulative</button>
+      </div>
       <table>
-        <thead><tr><th>Stock</th><th class="num">Deals</th><th class="num">Total Value</th><th></th></tr></thead>
+        <thead><tr><th>Stock</th><th class="num">Deals</th><th class="num">Value</th><th class="num">vs Prev Cumulative</th><th></th></tr></thead>
         <tbody id="by-stock-body"></tbody>
       </table>
     </div>
@@ -120,10 +125,15 @@
 
   <div id="by-sector" class="panel">
     <div class="section">
-      <h2>Cumulative Deal Value by Sector</h2>
-      <div class="hint">Highest to lowest. Tap a sector to see every deal within it.</div>
+      <h2>Deal Value by Sector</h2>
+      <div class="hint">Highest to lowest. Tap a sector to see every deal within it. % shows change vs. cumulative value through the previous day.</div>
+      <div class="sort-controls">
+        <span class="sort-label">View:</span>
+        <button class="sort-btn" id="sector-view-today" onclick="setSectorView('today')">Today</button>
+        <button class="sort-btn active" id="sector-view-cumulative" onclick="setSectorView('cumulative')">Cumulative</button>
+      </div>
       <table>
-        <thead><tr><th>Sector</th><th class="num">Deals</th><th class="num">Total Value</th><th></th></tr></thead>
+        <thead><tr><th>Sector</th><th class="num">Deals</th><th class="num">Value</th><th class="num">vs Prev Cumulative</th><th></th></tr></thead>
         <tbody id="by-sector-body"></tbody>
       </table>
     </div>
@@ -235,37 +245,100 @@ function groupBy(arr, keyFn) {
   return m;
 }
 
+function escAttr(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+let STOCK_VIEW = 'cumulative'; // 'today' or 'cumulative'
+let SECTOR_VIEW = 'cumulative';
+
+function setStockView(mode) {
+  STOCK_VIEW = mode;
+  document.getElementById('stock-view-today').classList.toggle('active', mode === 'today');
+  document.getElementById('stock-view-cumulative').classList.toggle('active', mode === 'cumulative');
+  renderByStock();
+}
+
+function setSectorView(mode) {
+  SECTOR_VIEW = mode;
+  document.getElementById('sector-view-today').classList.toggle('active', mode === 'today');
+  document.getElementById('sector-view-cumulative').classList.toggle('active', mode === 'cumulative');
+  renderBySector();
+}
+
+// For each group key (stock or sector), work out:
+//  - priorCumulative: total value across every day BEFORE the latest date
+//  - todayValue: total value on the latest date only
+//  - cumulativeTotal: priorCumulative + todayValue (i.e. all-time total)
+//  - changePct: how much the cumulative grew because of today, as a % of
+//    what had already accumulated before today (the "vs Prev Cumulative"
+//    column) — NEW if the stock/sector had no deals before today at all.
+function buildGroupRows(deals, keyFn) {
+  const latestDate = [...new Set(deals.map(d => d.deal_date))].sort().reverse()[0];
+  const groups = groupBy(deals, keyFn);
+
+  return [...groups.entries()].map(([key, groupDeals]) => {
+    const priorCumulative = groupDeals
+      .filter(d => d.deal_date < latestDate)
+      .reduce((s,d) => s + d.dealValue, 0);
+    const todayValue = groupDeals
+      .filter(d => d.deal_date === latestDate)
+      .reduce((s,d) => s + d.dealValue, 0);
+    const cumulativeTotal = priorCumulative + todayValue;
+
+    let changePct = null;
+    if (priorCumulative > 0) {
+      changePct = (todayValue / priorCumulative) * 100;
+    } else if (todayValue > 0) {
+      changePct = null; // NEW — nothing to compare against
+    }
+
+    return {
+      key, count: groupDeals.length, sample: groupDeals[0],
+      todayValue, priorCumulative, cumulativeTotal, changePct,
+      isNew: priorCumulative === 0 && todayValue > 0,
+    };
+  });
+}
+
+function changeCellHtml(r) {
+  if (r.isNew) return '<span class="badge new">● NEW</span>';
+  if (r.changePct === null) return '<span class="subtle">—</span>';
+  if (r.changePct === 0) return '<span class="badge flat">— 0.0%</span>';
+  const up = r.changePct > 0;
+  const cls = up ? 'up' : 'down';
+  const arrow = up ? '▲' : '▼';
+  return `<span class="badge ${cls}">${arrow} ${up ? '+' : ''}${r.changePct.toFixed(1)}%</span>`;
+}
+
 function renderByStock() {
-  const groups = groupBy(DEALS, d => d.sc_comp);
-  const rows = [...groups.entries()].map(([stock, deals]) => ({
-    stock,
-    ticker: deals[0].sc_nseid || '',
-    count: deals.length,
-    total: deals.reduce((s,d) => s + d.dealValue, 0),
-  })).sort((a,b) => b.total - a.total);
+  let rows = buildGroupRows(DEALS, d => d.sc_comp);
+  rows.forEach(r => { r.displayValue = STOCK_VIEW === 'today' ? r.todayValue : r.cumulativeTotal; });
+  rows = rows.filter(r => STOCK_VIEW === 'cumulative' || r.todayValue > 0); // "today" view hides stocks with no deals today
+  rows.sort((a,b) => b.displayValue - a.displayValue);
 
   document.getElementById('by-stock-body').innerHTML = rows.map(r => `
-    <tr class="clickable-row" onclick="showStockDeals(${JSON.stringify(r.stock)})">
-      <td class="name-cell">${r.stock} <span class="ticker">${r.ticker}</span></td>
+    <tr class="clickable-row" data-stock="${escAttr(r.key)}">
+      <td class="name-cell">${r.key} <span class="ticker">${r.sample.sc_nseid || ''}</span></td>
       <td class="num">${r.count}</td>
-      <td class="num value">₹${r.total.toFixed(2)} Cr</td>
+      <td class="num value">₹${r.displayValue.toFixed(2)} Cr</td>
+      <td class="num">${changeCellHtml(r)}</td>
       <td class="chevron">›</td>
     </tr>`).join('');
 }
 
 function renderBySector() {
-  const groups = groupBy(DEALS, d => d.stock_sector);
-  const rows = [...groups.entries()].map(([sector, deals]) => ({
-    sector,
-    count: deals.length,
-    total: deals.reduce((s,d) => s + d.dealValue, 0),
-  })).sort((a,b) => b.total - a.total);
+  let rows = buildGroupRows(DEALS, d => d.stock_sector);
+  rows.forEach(r => { r.displayValue = SECTOR_VIEW === 'today' ? r.todayValue : r.cumulativeTotal; });
+  rows = rows.filter(r => SECTOR_VIEW === 'cumulative' || r.todayValue > 0);
+  rows.sort((a,b) => b.displayValue - a.displayValue);
 
   document.getElementById('by-sector-body').innerHTML = rows.map(r => `
-    <tr class="clickable-row" onclick="showSectorDeals(${JSON.stringify(r.sector)})">
-      <td class="name-cell">${r.sector}</td>
+    <tr class="clickable-row" data-sector="${escAttr(r.key)}">
+      <td class="name-cell">${r.key}</td>
       <td class="num">${r.count}</td>
-      <td class="num value">₹${r.total.toFixed(2)} Cr</td>
+      <td class="num value">₹${r.displayValue.toFixed(2)} Cr</td>
+      <td class="num">${changeCellHtml(r)}</td>
       <td class="chevron">›</td>
     </tr>`).join('');
 }
@@ -410,6 +483,20 @@ function showTab(id, evt) {
 
 function closeModal() { document.getElementById('overlay').classList.remove('active'); }
 function closeModalOnBg(e) { if (e.target.id === 'overlay') closeModal(); }
+
+// Event delegation: listen once on each table body, so newly-rendered
+// rows (after every refresh) automatically work without re-attaching
+// listeners. This also avoids inline onclick="" strings entirely, which
+// previously broke because JSON.stringify() wraps values in double
+// quotes that collide with the surrounding HTML attribute's own quotes.
+document.getElementById('by-stock-body').addEventListener('click', (e) => {
+  const row = e.target.closest('tr[data-stock]');
+  if (row) showStockDeals(row.dataset.stock);
+});
+document.getElementById('by-sector-body').addEventListener('click', (e) => {
+  const row = e.target.closest('tr[data-sector]');
+  if (row) showSectorDeals(row.dataset.sector);
+});
 
 loadData();
 
