@@ -102,6 +102,39 @@
     border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
   }
   .theme-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+  /* Heatmap tiles */
+  .heatmap-grid { display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; }
+  .heatmap-tile {
+    border-radius: 10px; padding: 10px; cursor: pointer; color: white;
+    display: flex; flex-direction: column; justify-content: center;
+    overflow: hidden; transition: transform 0.1s ease;
+  }
+  .heatmap-tile:active { transform: scale(0.97); }
+  .heatmap-tile .tile-name { font-weight: 700; line-height: 1.15; word-break: break-word; }
+  .heatmap-tile .tile-value { opacity: 0.9; margin-top: 2px; }
+  .heatmap-tile .tile-change { opacity: 0.9; font-weight: 600; margin-top: 2px; }
+  .heatmap-legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 12px; flex-wrap: wrap; }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+  /* Top 10 bar chart */
+  .bar-chart { margin-bottom: 18px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+  .bar-label { width: 110px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .bar-track { flex: 1; background: var(--bg); border-radius: 4px; height: 18px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--accent); border-radius: 4px; display: flex; align-items: center; justify-content: flex-end; }
+  .bar-fill-label { color: white; font-size: 10px; font-weight: 600; padding-right: 6px; white-space: nowrap; }
+  .global-controls { margin-bottom: 12px; }
+  .etf-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .search-box {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-bottom: 10px;
+  }
+  .csv-btn {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 6px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+    margin-bottom: 10px;
+  }
 </style>
 </head>
 <body>
@@ -120,9 +153,17 @@
 <div id="app" style="display:none;">
   <div class="stats" id="stats"></div>
 
+  <div class="global-controls">
+    <label class="etf-toggle">
+      <input type="checkbox" id="hide-etf-toggle" onchange="toggleHideEtf()">
+      Hide ETFs / liquid funds (applies to all tabs)
+    </label>
+  </div>
+
   <div class="tabs">
     <div class="tab active" onclick="showTab('by-stock', event)">By Stock</div>
     <div class="tab" onclick="showTab('by-sector', event)">By Sector</div>
+    <div class="tab" onclick="showTab('heatmap', event)">Heatmap</div>
     <div class="tab" onclick="showTab('day-over-day', event)">Day-over-Day</div>
     <div class="tab" onclick="showTab('top30', event)">Top 30 Deals</div>
   </div>
@@ -130,39 +171,63 @@
   <div id="by-stock" class="panel active">
     <div class="section">
       <h2>Deal Value by Stock</h2>
-      <div class="hint">Highest to lowest. Tap a stock to see every deal behind the total. % shows change vs. cumulative value through the previous day.</div>
+      <div class="hint">Highest to lowest. Tap a stock to see every deal behind the total. % shows period-over-period change.</div>
+      <div class="bar-chart" id="stock-bars"></div>
+      <input type="text" class="search-box" placeholder="Search stocks..." oninput="onStockSearch(this.value)">
       <div class="sort-controls">
         <span class="sort-label">View:</span>
         <button class="sort-btn" id="stock-view-today" onclick="setStockView('today')">Today</button>
+        <button class="sort-btn" id="stock-view-7d" onclick="setStockView('7d')">7 Days</button>
+        <button class="sort-btn" id="stock-view-30d" onclick="setStockView('30d')">30 Days</button>
         <button class="sort-btn active" id="stock-view-cumulative" onclick="setStockView('cumulative')">Cumulative</button>
       </div>
       <table>
-        <thead><tr><th>Stock</th><th class="num">Deals</th><th class="num">Value</th><th class="num">vs Prev Cumulative</th><th></th></tr></thead>
+        <thead><tr><th>Stock</th><th class="num">Deals</th><th class="num">Value</th><th class="num">Change</th><th></th></tr></thead>
         <tbody id="by-stock-body"></tbody>
       </table>
     </div>
   </div>
 
+  <div id="heatmap" class="panel">
+    <div class="section">
+      <h2>Sector Heatmap</h2>
+      <div class="hint">Tile size = deal value (bigger = more money moved). Tile color = change vs. the period before. Tap a tile to see every deal in that sector. Uses the same period as By Sector's view toggle.</div>
+      <div class="heatmap-legend">
+        <span class="legend-swatch" style="background: rgb(217,45,45)"></span> Falling
+        <span class="legend-swatch" style="background: rgb(107,114,128)"></span> Flat / no comparison
+        <span class="legend-swatch" style="background: rgb(26,156,70)"></span> Rising
+        <span class="legend-swatch" style="background: #2563eb"></span> New today
+      </div>
+      <div class="heatmap-grid" id="heatmap-grid"></div>
+    </div>
+  </div>
+
+
   <div id="by-sector" class="panel">
     <div class="section">
       <h2>Deal Value by Sector</h2>
-      <div class="hint">Highest to lowest. Tap a sector to see every deal within it. % shows change vs. cumulative value through the previous day.</div>
+      <div class="hint">Highest to lowest. Tap a sector to see every deal within it. % shows period-over-period change.</div>
+      <input type="text" class="search-box" placeholder="Search sectors..." oninput="onSectorSearch(this.value)">
       <div class="sort-controls">
         <span class="sort-label">View:</span>
         <button class="sort-btn" id="sector-view-today" onclick="setSectorView('today')">Today</button>
+        <button class="sort-btn" id="sector-view-7d" onclick="setSectorView('7d')">7 Days</button>
+        <button class="sort-btn" id="sector-view-30d" onclick="setSectorView('30d')">30 Days</button>
         <button class="sort-btn active" id="sector-view-cumulative" onclick="setSectorView('cumulative')">Cumulative</button>
       </div>
       <table>
-        <thead><tr><th>Sector</th><th class="num">Deals</th><th class="num">Value</th><th class="num">vs Prev Cumulative</th><th></th></tr></thead>
+        <thead><tr><th>Sector</th><th class="num">Deals</th><th class="num">Value</th><th class="num">Change</th><th></th></tr></thead>
         <tbody id="by-sector-body"></tbody>
       </table>
     </div>
   </div>
 
+
   <div id="day-over-day" class="panel">
     <div class="section">
       <h2>Day-over-Day Comparison</h2>
       <div class="hint">Each stock's latest day total vs. its previous day of activity.</div>
+      <button class="csv-btn" onclick="exportDodCsv()">⬇ Download CSV</button>
       <div class="sort-controls">
         <span class="sort-label">Sort by:</span>
         <button class="sort-btn active" id="sort-value" onclick="setDodSort('value')">Value</button>
@@ -180,6 +245,7 @@
     <div class="section">
       <h2>Top 30 Deals — Today</h2>
       <div class="hint">Resets each day. No aggregation — highest deal value first, for the most recent trading day only. Swipe table sideways to see all columns.</div>
+      <button class="csv-btn" onclick="exportTop30Csv()">⬇ Download CSV</button>
       <div class="table-scroll">
       <table>
         <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
@@ -206,6 +272,26 @@
 <script>
 let DEALS = [];
 
+// --- Noise filter: ETFs / liquid funds are technically "large deals" but
+// are just cash-parking activity, not real equity signals. ---
+function isEtfOrLiquid(d) {
+  return d.stock_sector === 'ETF' || /^LIQUID/i.test(d.sc_nseid || '');
+}
+let HIDE_ETF = false;
+function getFilteredDeals() {
+  return HIDE_ETF ? DEALS.filter(d => !isEtfOrLiquid(d)) : DEALS;
+}
+function toggleHideEtf() {
+  HIDE_ETF = document.getElementById('hide-etf-toggle').checked;
+  render();
+}
+
+// --- Per-table search state ---
+let STOCK_SEARCH = '';
+let SECTOR_SEARCH = '';
+function onStockSearch(val) { STOCK_SEARCH = val.trim().toLowerCase(); renderByStock(); }
+function onSectorSearch(val) { SECTOR_SEARCH = val.trim().toLowerCase(); renderBySector(); renderHeatmap(); }
+
 function fmtTime(t) {
   t = String(t).padStart(4, '0');
   return t.slice(0,2) + ':' + t.slice(2);
@@ -218,10 +304,24 @@ async function loadData() {
     const res = await fetch('/.netlify/functions/get-deals');
     const json = await res.json();
     DEALS = json.data || [];
+    LAST_STATUS = json.status || null;
     render();
   } catch (e) {
     document.getElementById('meta-line').textContent = 'Failed to load data: ' + e.message;
   }
+}
+
+let LAST_STATUS = null;
+
+function healthLine() {
+  if (!LAST_STATUS) return '';
+  const ranAt = new Date(LAST_STATUS.ranAt);
+  const minsAgo = Math.round((Date.now() - ranAt.getTime()) / 60000);
+  const agoText = minsAgo < 1 ? 'just now' : `${minsAgo} min ago`;
+  if (LAST_STATUS.ok) {
+    return ` · Collector last ran successfully ${agoText}`;
+  }
+  return ` · ⚠ Collector last run FAILED ${agoText} (${escAttr(LAST_STATUS.error || 'unknown error')})`;
 }
 
 function render() {
@@ -233,12 +333,13 @@ function render() {
 
   const dates = [...new Set(DEALS.map(d => d.deal_date))].sort();
   document.getElementById('meta-line').textContent =
-    `${DEALS.length} deals collected · ${dates[0]} to ${dates[dates.length-1]} · Last refreshed ${new Date().toLocaleTimeString()} · Auto-refreshes every 5 min`;
+    `${DEALS.length} deals collected · ${dates[0]} to ${dates[dates.length-1]} · Last refreshed ${new Date().toLocaleTimeString()} · Auto-refreshes every 5 min${healthLine()}`;
   document.getElementById('app').style.display = 'block';
 
   renderStats(dates);
   renderByStock();
   renderBySector();
+  renderHeatmap();
   renderDayOverDay();
   renderTop30();
 }
@@ -269,55 +370,64 @@ function escAttr(s) {
   return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-let STOCK_VIEW = 'cumulative'; // 'today' or 'cumulative'
+let STOCK_VIEW = 'cumulative'; // 'today' | '7d' | '30d' | 'cumulative'
 let SECTOR_VIEW = 'cumulative';
 
 function setStockView(mode) {
   STOCK_VIEW = mode;
-  document.getElementById('stock-view-today').classList.toggle('active', mode === 'today');
-  document.getElementById('stock-view-cumulative').classList.toggle('active', mode === 'cumulative');
+  ['today','7d','30d','cumulative'].forEach(m =>
+    document.getElementById('stock-view-' + m).classList.toggle('active', m === mode));
   renderByStock();
 }
 
 function setSectorView(mode) {
   SECTOR_VIEW = mode;
-  document.getElementById('sector-view-today').classList.toggle('active', mode === 'today');
-  document.getElementById('sector-view-cumulative').classList.toggle('active', mode === 'cumulative');
+  ['today','7d','30d','cumulative'].forEach(m =>
+    document.getElementById('sector-view-' + m).classList.toggle('active', m === mode));
   renderBySector();
+  renderHeatmap();
 }
 
-// For each group key (stock or sector), work out:
-//  - priorCumulative: total value across every day BEFORE the latest date
-//  - todayValue: total value on the latest date only
-//  - cumulativeTotal: priorCumulative + todayValue (i.e. all-time total)
-//  - changePct: how much the cumulative grew because of today, as a % of
-//    what had already accumulated before today (the "vs Prev Cumulative"
-//    column) — NEW if the stock/sector had no deals before today at all.
-function buildGroupRows(deals, keyFn) {
-  const latestDate = [...new Set(deals.map(d => d.deal_date))].sort().reverse()[0];
+// For each group key (stock or sector), compute the value for the
+// selected period and a period-over-period % change:
+//  - 'cumulative': all-time total, % = how much it grew because of the
+//    latest trading day specifically (today's slice vs. everything
+//    accumulated before it)
+//  - 'today': just the latest day's value, % = vs. everything accumulated
+//    before today (same comparison base as cumulative, different number shown)
+//  - '7d' / '30d': sum over the last N *trading days present in the data*
+//    (not calendar days), % = vs. the N trading days immediately before
+//    that window (period-over-period)
+function buildGroupRows(deals, keyFn, period) {
+  const allDates = [...new Set(deals.map(d => d.deal_date))].sort().reverse();
+  const latestDate = allDates[0];
   const groups = groupBy(deals, keyFn);
 
+  if (period === 'today' || period === 'cumulative') {
+    return [...groups.entries()].map(([key, groupDeals]) => {
+      const priorCumulative = groupDeals.filter(d => d.deal_date < latestDate).reduce((s,d) => s + d.dealValue, 0);
+      const todayValue = groupDeals.filter(d => d.deal_date === latestDate).reduce((s,d) => s + d.dealValue, 0);
+      const cumulativeTotal = priorCumulative + todayValue;
+      const value = period === 'today' ? todayValue : cumulativeTotal;
+      const isNew = priorCumulative === 0 && todayValue > 0;
+      let changePct = null;
+      if (priorCumulative > 0) changePct = (todayValue / priorCumulative) * 100;
+      return { key, count: groupDeals.length, sample: groupDeals[0], value, changePct, isNew, hasActivityInPeriod: todayValue > 0 };
+    });
+  }
+
+  // 7d / 30d windows
+  const L = period === '7d' ? 7 : 30;
+  const currentWindow = new Set(allDates.slice(0, L));
+  const priorWindow = new Set(allDates.slice(L, L * 2));
+
   return [...groups.entries()].map(([key, groupDeals]) => {
-    const priorCumulative = groupDeals
-      .filter(d => d.deal_date < latestDate)
-      .reduce((s,d) => s + d.dealValue, 0);
-    const todayValue = groupDeals
-      .filter(d => d.deal_date === latestDate)
-      .reduce((s,d) => s + d.dealValue, 0);
-    const cumulativeTotal = priorCumulative + todayValue;
-
+    const currentValue = groupDeals.filter(d => currentWindow.has(d.deal_date)).reduce((s,d) => s + d.dealValue, 0);
+    const priorValue = groupDeals.filter(d => priorWindow.has(d.deal_date)).reduce((s,d) => s + d.dealValue, 0);
+    const isNew = priorValue === 0 && currentValue > 0 && priorWindow.size > 0;
     let changePct = null;
-    if (priorCumulative > 0) {
-      changePct = (todayValue / priorCumulative) * 100;
-    } else if (todayValue > 0) {
-      changePct = null; // NEW — nothing to compare against
-    }
-
-    return {
-      key, count: groupDeals.length, sample: groupDeals[0],
-      todayValue, priorCumulative, cumulativeTotal, changePct,
-      isNew: priorCumulative === 0 && todayValue > 0,
-    };
+    if (priorValue > 0) changePct = ((currentValue - priorValue) / priorValue) * 100;
+    return { key, count: groupDeals.filter(d => currentWindow.has(d.deal_date)).length, sample: groupDeals[0], value: currentValue, changePct, isNew, hasActivityInPeriod: currentValue > 0 };
   });
 }
 
@@ -332,39 +442,115 @@ function changeCellHtml(r) {
 }
 
 function renderByStock() {
-  let rows = buildGroupRows(DEALS, d => d.sc_comp);
-  rows.forEach(r => { r.displayValue = STOCK_VIEW === 'today' ? r.todayValue : r.cumulativeTotal; });
-  rows = rows.filter(r => STOCK_VIEW === 'cumulative' || r.todayValue > 0); // "today" view hides stocks with no deals today
-  rows.sort((a,b) => b.displayValue - a.displayValue);
+  let rows = buildGroupRows(getFilteredDeals(), d => d.sc_comp, STOCK_VIEW);
+  rows = rows.filter(r => STOCK_VIEW === 'cumulative' || r.hasActivityInPeriod);
+  if (STOCK_SEARCH) rows = rows.filter(r => r.key.toLowerCase().includes(STOCK_SEARCH));
+  rows.sort((a,b) => b.value - a.value);
 
-  document.getElementById('by-stock-body').innerHTML = rows.map(r => `
+  renderTopBars(rows);
+
+  document.getElementById('by-stock-body').innerHTML = rows.length ? rows.map(r => `
     <tr class="clickable-row" data-stock="${escAttr(r.key)}">
       <td class="name-cell">${r.key} <span class="ticker">${r.sample.sc_nseid || ''}</span></td>
       <td class="num">${r.count}</td>
-      <td class="num value">₹${r.displayValue.toFixed(2)} Cr</td>
+      <td class="num value">₹${r.value.toFixed(2)} Cr</td>
       <td class="num">${changeCellHtml(r)}</td>
       <td class="chevron">›</td>
-    </tr>`).join('');
+    </tr>`).join('') : `<tr><td colspan="5" class="empty">No matching stocks.</td></tr>`;
+}
+
+// Quick-glance top 10 bar chart above the By Stock table — same filtered/
+// sorted rows the table uses, just the first 10, rendered as plain
+// width-percentage bars (no charting library needed).
+function renderTopBars(sortedRows) {
+  const top10 = sortedRows.slice(0, 10);
+  const el = document.getElementById('stock-bars');
+  if (top10.length === 0) { el.innerHTML = ''; return; }
+  const maxVal = top10[0].value || 1;
+  el.innerHTML = top10.map(r => {
+    const pct = Math.max(4, (r.value / maxVal) * 100); // min 4% so tiny bars stay visible/tappable
+    return `
+      <div class="bar-row">
+        <div class="bar-label">${r.key}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${pct}%">
+            <span class="bar-fill-label">₹${r.value.toFixed(1)} Cr</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// --- Sector heatmap: tile size = value (sqrt-scaled so one huge sector
+// doesn't dwarf everything else), tile color = period-over-period % change.
+function pctToColor(pct) {
+  const clamped = Math.max(-50, Math.min(50, pct));
+  const t = (clamped + 50) / 100; // 0 (very negative) .. 1 (very positive)
+  const from = [217, 45, 45], to = [26, 156, 70]; // red -> green
+  const r = Math.round(from[0] + (to[0]-from[0]) * t);
+  const g = Math.round(from[1] + (to[1]-from[1]) * t);
+  const b = Math.round(from[2] + (to[2]-from[2]) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function tileColor(r) {
+  if (r.isNew) return '#2563eb';
+  if (r.changePct === null) return 'rgb(107,114,128)';
+  return pctToColor(r.changePct);
+}
+
+function tileChangeLabel(r) {
+  if (r.isNew) return '● NEW';
+  if (r.changePct === null) return '—';
+  const arrow = r.changePct > 0 ? '▲' : (r.changePct < 0 ? '▼' : '—');
+  return `${arrow} ${r.changePct >= 0 ? '+' : ''}${r.changePct.toFixed(1)}%`;
+}
+
+function renderHeatmap() {
+  let rows = buildGroupRows(getFilteredDeals(), d => d.stock_sector, SECTOR_VIEW);
+  rows = rows.filter(r => SECTOR_VIEW === 'cumulative' || r.hasActivityInPeriod);
+  if (SECTOR_SEARCH) rows = rows.filter(r => r.key.toLowerCase().includes(SECTOR_SEARCH));
+  rows.sort((a,b) => b.value - a.value);
+
+  const el = document.getElementById('heatmap-grid');
+  if (rows.length === 0) { el.innerHTML = '<div class="empty">No data to show.</div>'; return; }
+
+  const maxVal = rows[0].value || 1;
+  const MIN_SIZE = 92, MAX_SIZE = 210;
+
+  el.innerHTML = rows.map(r => {
+    const scale = Math.sqrt(r.value / maxVal); // 0..1, sqrt so area (not just side) scales with value
+    const size = MIN_SIZE + scale * (MAX_SIZE - MIN_SIZE);
+    const fontScale = 11 + scale * 6;
+    return `
+      <div class="heatmap-tile" data-sector="${escAttr(r.key)}"
+           style="width:${size}px;height:${size * 0.62}px;background:${tileColor(r)};font-size:${fontScale}px">
+        <div class="tile-name">${r.key}</div>
+        <div class="tile-value">₹${r.value.toFixed(1)} Cr</div>
+        <div class="tile-change">${tileChangeLabel(r)}</div>
+      </div>`;
+  }).join('');
 }
 
 function renderBySector() {
-  let rows = buildGroupRows(DEALS, d => d.stock_sector);
-  rows.forEach(r => { r.displayValue = SECTOR_VIEW === 'today' ? r.todayValue : r.cumulativeTotal; });
-  rows = rows.filter(r => SECTOR_VIEW === 'cumulative' || r.todayValue > 0);
-  rows.sort((a,b) => b.displayValue - a.displayValue);
+  let rows = buildGroupRows(getFilteredDeals(), d => d.stock_sector, SECTOR_VIEW);
+  rows = rows.filter(r => SECTOR_VIEW === 'cumulative' || r.hasActivityInPeriod);
+  if (SECTOR_SEARCH) rows = rows.filter(r => r.key.toLowerCase().includes(SECTOR_SEARCH));
+  rows.sort((a,b) => b.value - a.value);
 
-  document.getElementById('by-sector-body').innerHTML = rows.map(r => `
+  document.getElementById('by-sector-body').innerHTML = rows.length ? rows.map(r => `
     <tr class="clickable-row" data-sector="${escAttr(r.key)}">
       <td class="name-cell">${r.key}</td>
       <td class="num">${r.count}</td>
-      <td class="num value">₹${r.displayValue.toFixed(2)} Cr</td>
+      <td class="num value">₹${r.value.toFixed(2)} Cr</td>
       <td class="num">${changeCellHtml(r)}</td>
       <td class="chevron">›</td>
-    </tr>`).join('');
+    </tr>`).join('') : `<tr><td colspan="5" class="empty">No matching sectors.</td></tr>`;
 }
 
 function renderDayOverDay() {
-  const byStockDate = groupBy(DEALS, d => d.sc_comp + '|' + d.deal_date);
+  const deals = getFilteredDeals();
+  const byStockDate = groupBy(deals, d => d.sc_comp + '|' + d.deal_date);
   const stockDayTotals = [...byStockDate.entries()].map(([key, deals]) => {
     const [stock, date] = key.split('|');
     return { stock, date, sector: deals[0].stock_sector, total: deals.reduce((s,d)=>s+d.dealValue,0) };
@@ -450,20 +636,58 @@ function renderDodTable() {
   }).join('');
 }
 
+let CURRENT_TOP30 = []; // cached for CSV export
+
 function renderTop30() {
-  const latestDate = [...DEALS].map(d => d.deal_date).sort().reverse()[0];
-  const todayOnly = DEALS.filter(d => d.deal_date === latestDate);
+  const deals = getFilteredDeals();
+  const latestDate = [...deals].map(d => d.deal_date).sort().reverse()[0];
+  const todayOnly = deals.filter(d => d.deal_date === latestDate);
   const top = [...todayOnly].sort((a,b) => b.dealValue - a.dealValue).slice(0, 30);
-  document.getElementById('top30-body').innerHTML = top.map(d => `
+  CURRENT_TOP30 = top;
+  document.getElementById('top30-body').innerHTML = top.length ? top.map(d => `
     <tr>
       <td>${d.deal_date} ${fmtTime(d.deal_time)}</td>
       <td class="name-cell">${d.sc_comp}</td>
       <td>${d.stock_sector}</td>
       <td>${d.exchange}</td>
-      <td class="num">${d.quantity.toLocaleString()}</td>
-      <td class="num">₹${d.tradedPrice.toLocaleString()}</td>
+      <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
+      <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
-    </tr>`).join('');
+    </tr>`).join('') : `<tr><td colspan="7" class="empty">No deals match the current filter.</td></tr>`;
+}
+
+// --- CSV export ---
+function downloadCsv(filename, rows, headers, rowMapper) {
+  const escCsv = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [headers.join(',')];
+  for (const r of rows) lines.push(rowMapper(r).map(escCsv).join(','));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportTop30Csv() {
+  downloadCsv(
+    `top30-deals-${new Date().toISOString().slice(0,10)}.csv`,
+    CURRENT_TOP30,
+    ['Date', 'Time', 'Stock', 'Sector', 'Exchange', 'Quantity', 'Price', 'Value (Cr)'],
+    d => [d.deal_date, fmtTime(d.deal_time), d.sc_comp, d.stock_sector, d.exchange, d.quantity, d.tradedPrice, d.dealValue.toFixed(2)]
+  );
+}
+
+function exportDodCsv() {
+  downloadCsv(
+    `day-over-day-${new Date().toISOString().slice(0,10)}.csv`,
+    DOD_RESULTS,
+    ['Stock', 'Latest Value (Cr)', 'Previous Value (Cr)', 'Previous Date', 'Change %', 'Trend'],
+    r => [r.stock, r.total.toFixed(2), r.prevValue !== null ? r.prevValue.toFixed(2) : '', r.prevDate || '', r.changePct !== null ? r.changePct.toFixed(1) : '', r.direction]
+  );
 }
 
 function showStockDeals(stock) {
@@ -473,8 +697,8 @@ function showStockDeals(stock) {
     <tr>
       <td>${d.deal_date} ${fmtTime(d.deal_time)}</td>
       <td>${d.exchange}</td>
-      <td class="num">${d.quantity.toLocaleString()}</td>
-      <td class="num">₹${d.tradedPrice.toLocaleString()}</td>
+      <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
+      <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
     </tr>`).join('');
   document.getElementById('overlay').classList.add('active');
@@ -487,8 +711,8 @@ function showSectorDeals(sector) {
     <tr>
       <td>${d.deal_date} ${fmtTime(d.deal_time)} — ${d.sc_comp}</td>
       <td>${d.exchange}</td>
-      <td class="num">${d.quantity.toLocaleString()}</td>
-      <td class="num">₹${d.tradedPrice.toLocaleString()}</td>
+      <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
+      <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
     </tr>`).join('');
   document.getElementById('overlay').classList.add('active');
@@ -516,6 +740,10 @@ document.getElementById('by-stock-body').addEventListener('click', (e) => {
 document.getElementById('by-sector-body').addEventListener('click', (e) => {
   const row = e.target.closest('tr[data-sector]');
   if (row) showSectorDeals(row.dataset.sector);
+});
+document.getElementById('heatmap-grid').addEventListener('click', (e) => {
+  const tile = e.target.closest('.heatmap-tile[data-sector]');
+  if (tile) showSectorDeals(tile.dataset.sector);
 });
 
 // --- Theme handling: Dark / Light / System ---
