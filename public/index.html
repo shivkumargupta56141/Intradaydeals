@@ -162,6 +162,7 @@
 
   <div class="tabs">
     <div class="tab active" onclick="showTab('top30', event)">Top 30 Deals</div>
+    <div class="tab" onclick="showTab('all-deals', event)">All Deals</div>
     <div class="tab" onclick="showTab('by-stock', event)">By Stock</div>
     <div class="tab" onclick="showTab('by-sector', event)">By Sector</div>
     <div class="tab" onclick="showTab('heatmap', event)">Heatmap</div>
@@ -177,6 +178,27 @@
       <table>
         <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
         <tbody id="top30-body"></tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="all-deals" class="panel">
+    <div class="section">
+      <h2>All Deals</h2>
+      <div class="hint">Every deal collected, exactly as Moneycontrol reported it — no aggregation, no daily reset, all days included. Sort by whichever matters right now. Swipe table sideways to see all columns.</div>
+      <div id="all-deals-count" class="subtle" style="margin-bottom:8px;"></div>
+      <input type="text" class="search-box" placeholder="Search stocks..." oninput="onAllDealsSearch(this.value)">
+      <div class="sort-controls">
+        <span class="sort-label">Sort by:</span>
+        <button class="sort-btn active" id="all-sort-time" onclick="setAllDealsSort('time')">Most Recent</button>
+        <button class="sort-btn" id="all-sort-value" onclick="setAllDealsSort('value')">Value (High→Low)</button>
+      </div>
+      <button class="csv-btn" onclick="exportAllDealsCsv()">⬇ Download CSV</button>
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
+        <tbody id="all-deals-body"></tbody>
       </table>
       </div>
     </div>
@@ -260,8 +282,13 @@
       <h3 id="modal-title"></h3>
       <button class="close-btn" onclick="closeModal()">&times;</button>
     </div>
+    <div class="sort-controls">
+      <span class="sort-label">Sort by:</span>
+      <button class="sort-btn active" id="modal-sort-value" onclick="setModalSort('value')">Deal Value</button>
+      <button class="sort-btn" id="modal-sort-date" onclick="setModalSort('date')">Day (Oldest→Newest)</button>
+    </div>
     <table>
-      <thead><tr><th>Date/Time</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
+      <thead id="modal-thead"><tr><th>Date/Time</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
       <tbody id="modal-body"></tbody>
     </table>
   </div>
@@ -340,6 +367,7 @@ function render() {
   renderHeatmap();
   renderDayOverDay();
   renderTop30();
+  renderAllDeals();
 }
 
 function renderStats(dates) {
@@ -403,14 +431,16 @@ function buildGroupRows(deals, keyFn, period) {
 
   if (period === 'today' || period === 'cumulative') {
     return [...groups.entries()].map(([key, groupDeals]) => {
+      const todayDeals = groupDeals.filter(d => d.deal_date === latestDate);
       const priorCumulative = groupDeals.filter(d => d.deal_date < latestDate).reduce((s,d) => s + d.dealValue, 0);
-      const todayValue = groupDeals.filter(d => d.deal_date === latestDate).reduce((s,d) => s + d.dealValue, 0);
+      const todayValue = todayDeals.reduce((s,d) => s + d.dealValue, 0);
       const cumulativeTotal = priorCumulative + todayValue;
       const value = period === 'today' ? todayValue : cumulativeTotal;
+      const count = period === 'today' ? todayDeals.length : groupDeals.length;
       const isNew = priorCumulative === 0 && todayValue > 0;
       let changePct = null;
       if (priorCumulative > 0) changePct = (todayValue / priorCumulative) * 100;
-      return { key, count: groupDeals.length, sample: groupDeals[0], value, changePct, isNew, hasActivityInPeriod: todayValue > 0 };
+      return { key, count, sample: groupDeals[0], value, changePct, isNew, hasActivityInPeriod: todayValue > 0 };
     });
   }
 
@@ -427,6 +457,22 @@ function buildGroupRows(deals, keyFn, period) {
     if (priorValue > 0) changePct = ((currentValue - priorValue) / priorValue) * 100;
     return { key, count: groupDeals.filter(d => currentWindow.has(d.deal_date)).length, sample: groupDeals[0], value: currentValue, changePct, isNew, hasActivityInPeriod: currentValue > 0 };
   });
+}
+
+// Shared with the modal drill-down below: given a period, returns the Set
+// of qualifying trading dates (or null for 'cumulative', meaning "no date
+// filtering — include everything"). Keeps the popup's contents consistent
+// with whatever period the table/tile the user clicked was showing.
+function getPeriodDateSet(deals, period) {
+  const allDates = [...new Set(deals.map(d => d.deal_date))].sort().reverse();
+  if (period === 'cumulative') return null;
+  if (period === 'today') return new Set(allDates.slice(0, 1));
+  const L = period === '7d' ? 7 : 30;
+  return new Set(allDates.slice(0, L));
+}
+
+function periodLabel(period) {
+  return { today: 'Today', '7d': 'Last 7 Days', '30d': 'Last 30 Days', cumulative: 'All-time' }[period] || period;
 }
 
 function changeCellHtml(r) {
@@ -448,7 +494,7 @@ function renderByStock() {
   renderTopBars(rows);
 
   document.getElementById('by-stock-body').innerHTML = rows.length ? rows.map(r => `
-    <tr class="clickable-row" data-stock="${escAttr(r.key)}">
+    <tr class="clickable-row" data-stock="${escAttr(r.key)}" data-period="${STOCK_VIEW}">
       <td class="name-cell">${r.key} <span class="ticker">${r.sample.sc_nseid || ''}</span></td>
       <td class="num">${r.count}</td>
       <td class="num value">₹${r.value.toFixed(2)} Cr</td>
@@ -521,7 +567,7 @@ function renderHeatmap() {
     const size = MIN_SIZE + scale * (MAX_SIZE - MIN_SIZE);
     const fontScale = 11 + scale * 6;
     return `
-      <div class="heatmap-tile" data-sector="${escAttr(r.key)}"
+      <div class="heatmap-tile" data-sector="${escAttr(r.key)}" data-period="${SECTOR_VIEW}"
            style="width:${size}px;height:${size * 0.62}px;background:${tileColor(r)};font-size:${fontScale}px">
         <div class="tile-name">${r.key}</div>
         <div class="tile-value">₹${r.value.toFixed(1)} Cr</div>
@@ -537,7 +583,7 @@ function renderBySector() {
   rows.sort((a,b) => b.value - a.value);
 
   document.getElementById('by-sector-body').innerHTML = rows.length ? rows.map(r => `
-    <tr class="clickable-row" data-sector="${escAttr(r.key)}">
+    <tr class="clickable-row" data-sector="${escAttr(r.key)}" data-period="${SECTOR_VIEW}">
       <td class="name-cell">${r.key}</td>
       <td class="num">${r.count}</td>
       <td class="num value">₹${r.value.toFixed(2)} Cr</td>
@@ -654,6 +700,64 @@ function renderTop30() {
     </tr>`).join('') : `<tr><td colspan="7" class="empty">No deals match the current filter.</td></tr>`;
 }
 
+// --- All Deals tab: raw, unaggregated feed of everything collected —
+// every day, no daily reset, no cap on row count. Default sort is "Most
+// Recent" (mirrors how Moneycontrol's own page orders its live feed);
+// switch to "Value" to see the biggest deals across all of history.
+let ALL_DEALS_SORT = 'time'; // 'time' | 'value'
+let ALL_DEALS_SEARCH = '';
+let CURRENT_ALL_DEALS = []; // cached for CSV export
+
+function setAllDealsSort(mode) {
+  ALL_DEALS_SORT = mode;
+  document.getElementById('all-sort-time').classList.toggle('active', mode === 'time');
+  document.getElementById('all-sort-value').classList.toggle('active', mode === 'value');
+  renderAllDeals();
+}
+
+function onAllDealsSearch(val) {
+  ALL_DEALS_SEARCH = val.trim().toLowerCase();
+  renderAllDeals();
+}
+
+function renderAllDeals() {
+  let rows = getFilteredDeals();
+  if (ALL_DEALS_SEARCH) rows = rows.filter(d => d.sc_comp.toLowerCase().includes(ALL_DEALS_SEARCH));
+  rows = [...rows];
+
+  if (ALL_DEALS_SORT === 'value') {
+    rows.sort((a,b) => b.dealValue - a.dealValue);
+  } else {
+    // Most recent first — newest date+time at the top, matching how the
+    // live Moneycontrol page itself orders its feed.
+    rows.sort((a,b) => (b.deal_date + b.deal_time).localeCompare(a.deal_date + a.deal_time));
+  }
+
+  CURRENT_ALL_DEALS = rows;
+  document.getElementById('all-deals-count').textContent =
+    `${rows.length.toLocaleString('en-IN')} deal${rows.length === 1 ? '' : 's'} shown${ALL_DEALS_SEARCH ? ` (filtered by "${ALL_DEALS_SEARCH}")` : ''}`;
+
+  document.getElementById('all-deals-body').innerHTML = rows.length ? rows.map(d => `
+    <tr>
+      <td>${d.deal_date} ${fmtTime(d.deal_time)}</td>
+      <td class="name-cell">${d.sc_comp}</td>
+      <td>${d.stock_sector}</td>
+      <td>${d.exchange}</td>
+      <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
+      <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
+      <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
+    </tr>`).join('') : `<tr><td colspan="7" class="empty">No deals match the current filter.</td></tr>`;
+}
+
+function exportAllDealsCsv() {
+  downloadCsv(
+    `all-deals-${new Date().toISOString().slice(0,10)}.csv`,
+    CURRENT_ALL_DEALS,
+    ['Date', 'Time', 'Stock', 'Sector', 'Exchange', 'Quantity', 'Price', 'Value (Cr)'],
+    d => [d.deal_date, fmtTime(d.deal_time), d.sc_comp, d.stock_sector, d.exchange, d.quantity, d.tradedPrice, d.dealValue.toFixed(2)]
+  );
+}
+
 // --- CSV export ---
 function downloadCsv(filename, rows, headers, rowMapper) {
   const escCsv = (v) => {
@@ -688,32 +792,79 @@ function exportDodCsv() {
   );
 }
 
-function showStockDeals(stock) {
-  const deals = DEALS.filter(d => d.sc_comp === stock).sort((a,b) => b.dealValue - a.dealValue);
-  document.getElementById('modal-title').textContent = stock + ' — all deals';
-  document.getElementById('modal-body').innerHTML = deals.map(d => `
+// --- Modal drill-down: now period-aware (shows only the deals matching
+// whatever period the row/tile you clicked was displaying) and sortable
+// by Deal Value or by Day.
+let MODAL_TYPE = 'stock';   // 'stock' | 'sector'
+let MODAL_DEALS = [];
+let MODAL_SORT = 'value';   // 'value' | 'date'
+
+function dealsForModal(type, key, period) {
+  const filtered = getFilteredDeals();
+  const base = filtered.filter(d => type === 'stock' ? d.sc_comp === key : d.stock_sector === key);
+  const dateSet = getPeriodDateSet(filtered, period);
+  return dateSet ? base.filter(d => dateSet.has(d.deal_date)) : base;
+}
+
+function openModal(title) {
+  document.getElementById('modal-title').textContent = title;
+  const thead = document.getElementById('modal-thead');
+  thead.innerHTML = MODAL_TYPE === 'sector'
+    ? '<tr><th>Date/Time</th><th>Stock</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr>'
+    : '<tr><th>Date/Time</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr>';
+  renderModalBody();
+  document.getElementById('overlay').classList.add('active');
+}
+
+function setModalSort(mode) {
+  MODAL_SORT = mode;
+  document.getElementById('modal-sort-value').classList.toggle('active', mode === 'value');
+  document.getElementById('modal-sort-date').classList.toggle('active', mode === 'date');
+  renderModalBody();
+}
+
+function renderModalBody() {
+  let rows = [...MODAL_DEALS];
+  if (MODAL_SORT === 'value') {
+    rows.sort((a,b) => b.dealValue - a.dealValue);
+  } else {
+    // Oldest -> newest, so the list reads like a timeline of how the day/period unfolded
+    rows.sort((a,b) => (a.deal_date + a.deal_time).localeCompare(b.deal_date + b.deal_time));
+  }
+  document.getElementById('modal-body').innerHTML = rows.length ? rows.map(d => MODAL_TYPE === 'sector' ? `
+    <tr>
+      <td>${d.deal_date} ${fmtTime(d.deal_time)}</td>
+      <td>${d.sc_comp}</td>
+      <td>${d.exchange}</td>
+      <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
+      <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
+      <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
+    </tr>` : `
     <tr>
       <td>${d.deal_date} ${fmtTime(d.deal_time)}</td>
       <td>${d.exchange}</td>
       <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
       <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
-    </tr>`).join('');
-  document.getElementById('overlay').classList.add('active');
+    </tr>`).join('') : `<tr><td colspan="6" class="empty">No deals in this period.</td></tr>`;
 }
 
-function showSectorDeals(sector) {
-  const deals = DEALS.filter(d => d.stock_sector === sector).sort((a,b) => b.dealValue - a.dealValue);
-  document.getElementById('modal-title').textContent = sector + ' — all deals';
-  document.getElementById('modal-body').innerHTML = deals.map(d => `
-    <tr>
-      <td>${d.deal_date} ${fmtTime(d.deal_time)} — ${d.sc_comp}</td>
-      <td>${d.exchange}</td>
-      <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
-      <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
-      <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
-    </tr>`).join('');
-  document.getElementById('overlay').classList.add('active');
+function showStockDeals(stock, period = 'cumulative') {
+  MODAL_TYPE = 'stock';
+  MODAL_DEALS = dealsForModal('stock', stock, period);
+  MODAL_SORT = 'value';
+  document.getElementById('modal-sort-value').classList.add('active');
+  document.getElementById('modal-sort-date').classList.remove('active');
+  openModal(`${stock} — ${periodLabel(period)} deals`);
+}
+
+function showSectorDeals(sector, period = 'cumulative') {
+  MODAL_TYPE = 'sector';
+  MODAL_DEALS = dealsForModal('sector', sector, period);
+  MODAL_SORT = 'value';
+  document.getElementById('modal-sort-value').classList.add('active');
+  document.getElementById('modal-sort-date').classList.remove('active');
+  openModal(`${sector} — ${periodLabel(period)} deals`);
 }
 
 function showTab(id, evt) {
@@ -733,15 +884,15 @@ function closeModalOnBg(e) { if (e.target.id === 'overlay') closeModal(); }
 // quotes that collide with the surrounding HTML attribute's own quotes.
 document.getElementById('by-stock-body').addEventListener('click', (e) => {
   const row = e.target.closest('tr[data-stock]');
-  if (row) showStockDeals(row.dataset.stock);
+  if (row) showStockDeals(row.dataset.stock, row.dataset.period);
 });
 document.getElementById('by-sector-body').addEventListener('click', (e) => {
   const row = e.target.closest('tr[data-sector]');
-  if (row) showSectorDeals(row.dataset.sector);
+  if (row) showSectorDeals(row.dataset.sector, row.dataset.period);
 });
 document.getElementById('heatmap-grid').addEventListener('click', (e) => {
   const tile = e.target.closest('.heatmap-tile[data-sector]');
-  if (tile) showSectorDeals(tile.dataset.sector);
+  if (tile) showSectorDeals(tile.dataset.sector, tile.dataset.period);
 });
 
 // --- Theme handling: Dark / Light / System ---
