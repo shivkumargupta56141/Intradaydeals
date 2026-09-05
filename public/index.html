@@ -77,6 +77,12 @@
   .badge.up { background: rgba(52,199,89,0.15); color: var(--up); }
   .badge.down { background: rgba(255,92,92,0.15); color: var(--down); }
   .badge.new { background: rgba(255,176,32,0.15); color: var(--new); }
+  .badge.vol-high { background: rgba(255,92,92,0.18); color: var(--down); }
+  .vol-mid { color: var(--accent); font-weight: 600; }
+  .streak-badge {
+    display: inline-block; background: rgba(255,176,32,0.15); color: var(--new);
+    border-radius: 20px; padding: 1px 7px; font-size: 10px; font-weight: 700; margin-left: 6px;
+  }
   .badge.flat { background: rgba(139,146,158,0.15); color: var(--muted); }
   .empty, .loading { text-align: center; color: var(--muted); padding: 30px !important; }
   .overlay {
@@ -176,7 +182,7 @@
       <button class="csv-btn" onclick="exportTop30Csv()">⬇ Download CSV</button>
       <div class="table-scroll">
       <table>
-        <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
+        <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th><th class="num">% of Day's Vol</th></tr></thead>
         <tbody id="top30-body"></tbody>
       </table>
       </div>
@@ -197,7 +203,7 @@
       <button class="csv-btn" onclick="exportAllDealsCsv()">⬇ Download CSV</button>
       <div class="table-scroll">
       <table>
-        <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr></thead>
+        <thead><tr><th>Date/Time</th><th>Stock</th><th>Sector</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th><th class="num">% of Day's Vol</th></tr></thead>
         <tbody id="all-deals-body"></tbody>
       </table>
       </div>
@@ -216,6 +222,11 @@
         <button class="sort-btn" id="stock-view-7d" onclick="setStockView('7d')">7 Days</button>
         <button class="sort-btn" id="stock-view-30d" onclick="setStockView('30d')">30 Days</button>
         <button class="sort-btn active" id="stock-view-cumulative" onclick="setStockView('cumulative')">Cumulative</button>
+      </div>
+      <div class="sort-controls">
+        <span class="sort-label">Sort by:</span>
+        <button class="sort-btn active" id="stock-sort-value" onclick="setStockSortMode('value')">Value</button>
+        <button class="sort-btn" id="stock-sort-streak" onclick="setStockSortMode('streak')">🔥 Streak</button>
       </div>
       <table>
         <thead><tr><th>Stock</th><th class="num">Deals</th><th class="num">Value</th><th class="num">Change</th><th></th></tr></thead>
@@ -322,6 +333,23 @@ function fmtTime(t) {
   return t.slice(0,2) + ':' + t.slice(2);
 }
 
+// --- Deal size vs. that stock's own trading volume that day ---
+// volume = total shares traded in the stock that day (already in every
+// record); quantity = size of this specific large deal. No new data needed.
+function volumePct(d) {
+  if (!d.volume || d.volume <= 0) return null;
+  return (d.quantity / d.volume) * 100;
+}
+
+function volumePctCellHtml(d) {
+  const pct = volumePct(d);
+  if (pct === null) return '<span class="subtle">—</span>';
+  if (pct >= 20) return `<span class="badge vol-high">🔥 ${pct.toFixed(1)}%</span>`;
+  if (pct >= 5) return `<span class="vol-mid">${pct.toFixed(1)}%</span>`;
+  return `${pct.toFixed(1)}%`;
+}
+
+
 async function loadData() {
   document.getElementById('meta-line').textContent = 'Refreshing...';
   document.getElementById('app').style.display = 'none';
@@ -394,6 +422,39 @@ function groupBy(arr, keyFn) {
 
 function escAttr(s) {
   return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// --- Repeat-activity streaks: how many consecutive trading days (ending
+// on the latest date in the dataset) a stock/sector has shown at least
+// one large deal. No cap — counts back as far as the streak actually
+// runs, however much history that turns out to be. A gap of even one
+// day resets it to 0. Computed once per render, independent of whatever
+// period toggle (Today/7d/30d/Cumulative) is currently selected — it's
+// always based on the stock's full history, since a streak is a fact
+// about the stock, not about which slice you're viewing right now.
+function computeStreaks(deals, keyFn) {
+  const allDates = [...new Set(deals.map(d => d.deal_date))].sort().reverse();
+  const dateKeySets = new Map();
+  for (const d of deals) {
+    const k = keyFn(d);
+    if (!dateKeySets.has(d.deal_date)) dateKeySets.set(d.deal_date, new Set());
+    dateKeySets.get(d.deal_date).add(k);
+  }
+  const allKeys = new Set(deals.map(keyFn));
+  const streaks = new Map();
+  for (const key of allKeys) {
+    let streak = 0;
+    for (const date of allDates) {
+      if (dateKeySets.get(date)?.has(key)) streak++;
+      else break;
+    }
+    streaks.set(key, streak);
+  }
+  return streaks;
+}
+
+function streakBadgeHtml(streak) {
+  return streak >= 3 ? `<span class="streak-badge">🔥 ${streak}-day streak</span>` : '';
 }
 
 let STOCK_VIEW = 'cumulative'; // 'today' | '7d' | '30d' | 'cumulative'
@@ -485,17 +546,34 @@ function changeCellHtml(r) {
   return `<span class="badge ${cls}">${arrow} ${up ? '+' : ''}${r.changePct.toFixed(1)}%</span>`;
 }
 
+let STOCK_SORT_MODE = 'value'; // 'value' | 'streak'
+
+function setStockSortMode(mode) {
+  STOCK_SORT_MODE = mode;
+  document.getElementById('stock-sort-value').classList.toggle('active', mode === 'value');
+  document.getElementById('stock-sort-streak').classList.toggle('active', mode === 'streak');
+  renderByStock();
+}
+
 function renderByStock() {
   let rows = buildGroupRows(getFilteredDeals(), d => d.sc_comp, STOCK_VIEW);
   rows = rows.filter(r => STOCK_VIEW === 'cumulative' || r.hasActivityInPeriod);
   if (STOCK_SEARCH) rows = rows.filter(r => r.key.toLowerCase().includes(STOCK_SEARCH));
-  rows.sort((a,b) => b.value - a.value);
 
-  renderTopBars(rows);
+  const streaks = computeStreaks(getFilteredDeals(), d => d.sc_comp);
+  rows.forEach(r => { r.streak = streaks.get(r.key) || 0; });
+
+  if (STOCK_SORT_MODE === 'streak') {
+    rows.sort((a,b) => b.streak - a.streak || b.value - a.value);
+  } else {
+    rows.sort((a,b) => b.value - a.value);
+  }
+
+  renderTopBars([...rows].sort((a,b) => b.value - a.value)); // bar chart always shows top value movers regardless of sort mode
 
   document.getElementById('by-stock-body').innerHTML = rows.length ? rows.map(r => `
     <tr class="clickable-row" data-stock="${escAttr(r.key)}" data-period="${STOCK_VIEW}">
-      <td class="name-cell">${r.key} <span class="ticker">${r.sample.sc_nseid || ''}</span></td>
+      <td class="name-cell">${r.key} <span class="ticker">${r.sample.sc_nseid || ''}</span>${streakBadgeHtml(r.streak)}</td>
       <td class="num">${r.count}</td>
       <td class="num value">₹${r.value.toFixed(2)} Cr</td>
       <td class="num">${changeCellHtml(r)}</td>
@@ -697,7 +775,8 @@ function renderTop30() {
       <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
       <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
-    </tr>`).join('') : `<tr><td colspan="7" class="empty">No deals match the current filter.</td></tr>`;
+      <td class="num">${volumePctCellHtml(d)}</td>
+    </tr>`).join('') : `<tr><td colspan="8" class="empty">No deals match the current filter.</td></tr>`;
 }
 
 // --- All Deals tab: raw, unaggregated feed of everything collected —
@@ -746,15 +825,16 @@ function renderAllDeals() {
       <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
       <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
-    </tr>`).join('') : `<tr><td colspan="7" class="empty">No deals match the current filter.</td></tr>`;
+      <td class="num">${volumePctCellHtml(d)}</td>
+    </tr>`).join('') : `<tr><td colspan="8" class="empty">No deals match the current filter.</td></tr>`;
 }
 
 function exportAllDealsCsv() {
   downloadCsv(
     `all-deals-${new Date().toISOString().slice(0,10)}.csv`,
     CURRENT_ALL_DEALS,
-    ['Date', 'Time', 'Stock', 'Sector', 'Exchange', 'Quantity', 'Price', 'Value (Cr)'],
-    d => [d.deal_date, fmtTime(d.deal_time), d.sc_comp, d.stock_sector, d.exchange, d.quantity, d.tradedPrice, d.dealValue.toFixed(2)]
+    ['Date', 'Time', 'Stock', 'Sector', 'Exchange', 'Quantity', 'Price', 'Value (Cr)', '% of Day Volume'],
+    d => [d.deal_date, fmtTime(d.deal_time), d.sc_comp, d.stock_sector, d.exchange, d.quantity, d.tradedPrice, d.dealValue.toFixed(2), volumePct(d) !== null ? volumePct(d).toFixed(1) : '']
   );
 }
 
@@ -778,8 +858,8 @@ function exportTop30Csv() {
   downloadCsv(
     `top30-deals-${new Date().toISOString().slice(0,10)}.csv`,
     CURRENT_TOP30,
-    ['Date', 'Time', 'Stock', 'Sector', 'Exchange', 'Quantity', 'Price', 'Value (Cr)'],
-    d => [d.deal_date, fmtTime(d.deal_time), d.sc_comp, d.stock_sector, d.exchange, d.quantity, d.tradedPrice, d.dealValue.toFixed(2)]
+    ['Date', 'Time', 'Stock', 'Sector', 'Exchange', 'Quantity', 'Price', 'Value (Cr)', '% of Day Volume'],
+    d => [d.deal_date, fmtTime(d.deal_time), d.sc_comp, d.stock_sector, d.exchange, d.quantity, d.tradedPrice, d.dealValue.toFixed(2), volumePct(d) !== null ? volumePct(d).toFixed(1) : '']
   );
 }
 
@@ -810,8 +890,8 @@ function openModal(title) {
   document.getElementById('modal-title').textContent = title;
   const thead = document.getElementById('modal-thead');
   thead.innerHTML = MODAL_TYPE === 'sector'
-    ? '<tr><th>Date/Time</th><th>Stock</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr>'
-    : '<tr><th>Date/Time</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th></tr>';
+    ? '<tr><th>Date/Time</th><th>Stock</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th><th class="num">% Vol</th></tr>'
+    : '<tr><th>Date/Time</th><th>Exch</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Value</th><th class="num">% Vol</th></tr>';
   renderModalBody();
   document.getElementById('overlay').classList.add('active');
 }
@@ -839,6 +919,7 @@ function renderModalBody() {
       <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
       <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
+      <td class="num">${volumePctCellHtml(d)}</td>
     </tr>` : `
     <tr>
       <td>${d.deal_date} ${fmtTime(d.deal_time)}</td>
@@ -846,7 +927,8 @@ function renderModalBody() {
       <td class="num">${d.quantity.toLocaleString('en-IN')}</td>
       <td class="num">₹${d.tradedPrice.toLocaleString('en-IN')}</td>
       <td class="num value">₹${d.dealValue.toFixed(2)} Cr</td>
-    </tr>`).join('') : `<tr><td colspan="6" class="empty">No deals in this period.</td></tr>`;
+      <td class="num">${volumePctCellHtml(d)}</td>
+    </tr>`).join('') : `<tr><td colspan="7" class="empty">No deals in this period.</td></tr>`;
 }
 
 function showStockDeals(stock, period = 'cumulative') {
